@@ -11,6 +11,12 @@ local IS_SERVER = RunService:IsServer()
 local Net = {}
 Net.Debug = false
 
+-- Optional server-side hooks, nil by default so plain Net behaves exactly like before.
+-- Middleware(player, name, ...) runs after cooldown + type checks pass. Return false to drop the call.
+-- OnReject(player, name, reason) runs whenever a call is dropped ("cooldown" or "types").
+Net.Middleware = nil :: ((Player, string, ...any) -> boolean)?
+Net.OnReject = nil :: ((Player, string, string) -> ())?
+
 --==============================================================
 -- Remote container
 --==============================================================
@@ -77,6 +83,34 @@ local function allowed(player: Player, key: string, cooldown: number): boolean
 
 	map[key] = now
 	return true
+end
+
+--==============================================================
+-- Hooks
+--==============================================================
+
+local function reject(player: Player, name: string, reason: string)
+	local hook = Net.OnReject
+	if hook then
+		local ok, err = pcall(hook, player, name, reason)
+		if not ok then
+			warn(`[Net] OnReject errored: {err}`)
+		end
+	end
+end
+
+local function passes(player: Player, name: string, ...: any): boolean
+	local hook = Net.Middleware
+	if not hook then
+		return true
+	end
+	local ok, result = pcall(hook, player, name, ...)
+	if not ok then
+		-- a broken hook should never break the game's remotes
+		warn(`[Net] Middleware errored: {result}`)
+		return true
+	end
+	return result ~= false
 end
 
 --==============================================================
@@ -156,12 +190,17 @@ function Event:Listen(callback: (...any) -> ()): RBXScriptConnection
 	if IS_SERVER then
 		return self._remote.OnServerEvent:Connect(function(player: Player, ...)
 			if not allowed(player, self._name, self._cooldown) then
+				reject(player, self._name, "cooldown")
 				return
 			end
 			if not typesOk(self._types, ...) then
 				if Net.Debug then
 					warn(`[Net] {self._name} rejected bad args from {player.Name}`)
 				end
+				reject(player, self._name, "types")
+				return
+			end
+			if not passes(player, self._name, ...) then
 				return
 			end
 
@@ -196,12 +235,17 @@ function Func:Handle(callback: (Player, ...any) -> ...any)
 
 	self._remote.OnServerInvoke = function(player: Player, ...)
 		if not allowed(player, self._name, self._cooldown) then
+			reject(player, self._name, "cooldown")
 			return nil
 		end
 		if not typesOk(self._types, ...) then
 			if Net.Debug then
 				warn(`[Net] {self._name} rejected bad args from {player.Name}`)
 			end
+			reject(player, self._name, "types")
+			return nil
+		end
+		if not passes(player, self._name, ...) then
 			return nil
 		end
 
