@@ -56,6 +56,24 @@ local ok = SetName:Invoke("NewName")
 If a client sends the wrong argument types, the call is dropped before the
 handler runs - no error, no exploit path, no crash.
 
+### Hooks (server, optional)
+
+Two global hooks let something like an anticheat watch every remote without
+touching each one. Both are nil by default and pcall-wrapped, so a broken hook
+can never break your remotes.
+
+```lua
+-- runs after cooldown + type checks pass. return false to drop the call
+Net.Middleware = function(player, name, ...)
+	return true
+end
+
+-- runs whenever a call gets dropped. reason is "cooldown" or "types"
+Net.OnReject = function(player, name, reason)
+	warn(player.Name, "got rejected on", name, reason)
+end
+```
+
 ## Why these exist
 
 Server-authoritative design only works if the server can trust nothing the
